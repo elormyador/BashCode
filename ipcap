@@ -1,0 +1,113 @@
+#/bin/bash
+
+printf "\n"
+
+Network=$1              #Get network from user, ie: 192.168.10.10
+Mask=$2                 #Get subnet mask from user, ie 255.255.255.128
+
+##################################### Valid Network Format Checker
+##################################### By Elorm Yador
+##################################### This code makes sure that the input is a valid Class C type Network.
+
+if [ ! $Network  ]
+then
+        printf "Network ip not provided! Usage: ipcap <network address> <subnet mask>\n\n"
+        exit 1
+fi
+
+if [ ! $Mask  ]
+then
+        printf "Subnet Mask not provided! Usage: ipcap <network address> <subnet mask>\n\n"
+        exit 1
+fi
+
+if [[ ! $Network =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]
+then
+        printf "Invalid Nework format. Network Address must be in format x.x.x.x where x is between 0-255.\n\n"
+        exit 1
+fi
+
+if [[ ! $Mask =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]
+then
+        printf "Invalid Mask format. Subnet Mask must be in format x.x.x.x where x is between 0-255.\n\n"
+        exit 1
+fi
+
+IFS='.' read -ra NETBLOCK <<< "$Network"        #Store Network address in array using '.' as delimiter
+for i in "${NETBLOCK[@]}"; do
+        if ! [[ $i -ge 0 && $i -lt 256 ]]       #Make sure network numbers are 255 or less.
+        then
+                printf "Invalid Network Address. Network Address numbers must be between 0-255.\n\n"
+                exit 1
+        fi
+done
+
+IFS='.' read -ra MASKBLOCK <<< "$Mask"          #Store Subnet Mask in array using '.' as delimiter
+for i in "${MASKBLOCK[@]}"; do                  #Make sure subnet mask numbers are valid.
+        if ! [[ $i -eq 0 || $i -eq 128 || $i -eq 192 || $i -eq 224 || $i -eq  240 || $i -eq 248 || $i -eq 252 || $i -eq 254 || $i -eq 255 ]]
+        then
+                printf "Invalid Subnet Mask. Subnet Mask numbers must be 0, 128, 192, 224, 240, 248, 252, 254, or 255.\n\n"
+                exit 1
+        fi
+done
+
+j=0
+while [ $j -lt 3 ]; do
+        if ! [[ ${MASKBLOCK[$j]} -eq 255 ]]     #Make sure Network Address is a class C network.
+        then
+                printf "Sorry, Class C networks supported only. First three octects of subnet mask must be 255.\n\n"
+                exit 1
+        else
+                let j=j+1
+        fi
+
+Blocksize=$(( (${MASKBLOCK[3]} ^ 255)+1 ))      #For class C network, block size is XOR of last octect.
+Blockaddr=0
+
+if [ $Blocksize -lt 2 ]                         #Make sure blocksize is greater than 2. (first and last address is network / broadcast)
+then
+        printf "Invalid block size for last octect. Last octect must be less than 255.\n\n"
+        exit 1
+fi
+
+j=0
+while [ $j -lt 256 ]; do                        #Find network range by incrementing by block size until net address is in range.
+        if [ $j -gt ${NETBLOCK[3]} ]
+        then
+                Blockaddr=$(( $j-$Blocksize ))
+                j=256
+        else
+                j=$(( $j+$Blocksize ))
+        fi
+done
+
+##################################### Ping Sweep Code
+##################################### By Elorm Yador
+##################################### This tool does a ping and DNS lookup on each address in the network. Results are then stored in ipcap file.
+
+echo "Ip Capture Tool: By Elorm Yador"
+
+NET=${NETBLOCK[0]}.${NETBLOCK[1]}.${NETBLOCK[2]}.
+COUNT=1
+
+echo "Ping sweeping the network..."
+while [ $COUNT -lt $(($Blocksize-1)) ]; do
+        HOST=$(( $Blockaddr+$COUNT ))
+        ( ping -q -c4 $NET$HOST | awk -v n=$NET -v h=$HOST '/packets transmitted,/ {printf "Ping for " n h ": "  $4 "/4   Domain Lookup: "}' && nslookup $NET$HOST | awk '/name = /{printf $4}' && printf "\n" ) > "result.$HOST" &
+#       RESULTS[$COUNT]=$( echo test & )
+        let COUNT=COUNT+1
+done
+
+wait   #waits for all backround jobs to complete.
+
+rm -f ipcap
+COUNT=1
+while [ $COUNT -lt $(($Blocksize-1)) ]; do
+        HOST=$(( $Blockaddr+$COUNT ))
+        cat "result.$HOST" >> ipcap
+        rm -f "result.$HOST"
+        let COUNT=COUNT+1
+done
+
+echo "Ping capture complete. Results stored in ipcap file."
+
